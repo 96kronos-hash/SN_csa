@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CSA模擬試験</title>
+<meta name="theme-color" content="#1f6f5c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CSA模試">
+<link rel="manifest" href="/manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+:root{--g:#1f6f5c;--ok:#1e8e3e;--okbg:#e6f4ea;--ng:#d93025;--ngbg:#fce8e6;--bd:#dfe3e2;--bg:#f5f7f6;--tx:#1d2422;--mut:#5f6b68}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif;background:var(--bg);color:var(--tx);line-height:1.6;-webkit-text-size-adjust:100%}
+header{background:var(--g);color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:18px;cursor:pointer}
+main{max-width:760px;margin:0 auto;padding:16px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}
+.card{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
+.btn{display:block;width:100%;padding:14px;border:0;border-radius:10px;font-size:16px;font-weight:600;background:var(--g);color:#fff;cursor:pointer;margin:8px 0;white-space:pre-line}
+.btn.sub{background:#fff;color:var(--g);border:1.5px solid var(--g)}
+.btn.warn{background:#fff;color:var(--ng);border:1.5px solid var(--ng)}
+.btn:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mut{color:var(--mut);font-size:13px}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:#eef2f1;color:var(--mut);margin-right:6px}
+.pre{white-space:pre-wrap;word-break:break-word}
+.qtext{font-size:17px;margin:10px 0 14px}
+.opt{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:12px;margin:8px 0;border:1.5px solid var(--bd);border-radius:10px;background:#fff;font-size:15px;color:var(--tx);cursor:pointer;font-family:inherit;line-height:1.6}
+.opt .k{flex:none;width:26px;height:26px;border-radius:50%;border:1.5px solid var(--bd);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.opt.sel{border-color:var(--g);background:#e8f3f0}
+.opt.sel .k{background:var(--g);color:#fff;border-color:var(--g)}
+.opt.ok{border-color:var(--ok);background:var(--okbg)}
+.opt.ok .k{background:var(--ok);color:#fff;border-color:var(--ok)}
+.opt.ng{border-color:var(--ng);background:var(--ngbg)}
+.opt.ng .k{background:var(--ng);color:#fff;border-color:var(--ng)}
+.badge{font-size:12px;font-weight:700;margin-left:auto;flex:none;padding-left:6px}
+.ok .badge{color:var(--ok)}.ng .badge{color:var(--ng)}
+.expl{background:#f7f8fa;border-left:4px solid var(--g);padding:12px;border-radius:6px;margin-top:12px;font-size:14px}
+.bar{height:6px;background:#e3e8e6;border-radius:3px;overflow:hidden;margin-top:8px}.bar>i{display:block;height:100%;background:var(--g)}
+.res-h{display:flex;align-items:center;gap:8px;font-weight:700}
+.mark{font-size:22px}.mark.o{color:var(--ok)}.mark.x{color:var(--ng)}
+.score{font-size:44px;font-weight:800;text-align:center;margin:4px 0}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px}td,th{padding:6px 4px;border-bottom:1px solid var(--bd);text-align:left}.n{text-align:right;white-space:nowrap}
+select,input[type=text]{width:100%;padding:12px;font-size:16px;border:1px solid var(--bd);border-radius:8px;background:#fff;margin:6px 0}
+.pal{display:grid;grid-template-columns:repeat(auto-fill,minmax(42px,1fr));gap:6px;margin-top:10px}
+.pal button{padding:8px 0;border:1px solid var(--bd);border-radius:6px;background:#fff;font-size:13px}
+.pal button.a{background:#e8f3f0;border-color:var(--g)}.pal button.c{outline:2px solid var(--g)}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px}
+summary{cursor:pointer;font-weight:600}
+label.chk{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:14px}
+</style>
+</head>
+<body>
+<header><h1 id="home">CSA模擬試験</h1></header>
+<main id="app"></main>
+<script>
+/* ===== 設定 ===== */
+// ここに公開CSVのURLを入れると、どの端末でも設定なしで使えます（空のままなら画面の「設定」で入力）
+const DEFAULT_CSV_URL = "";
+
+const LS = { url:'csa_url', cache:'csa_cache', wrong:'csa_wrong', hist:'csa_hist', exam:'csa_exam', last:'csa_last', shuf:'csa_shuffle', domain:'csa_domain' };
+const KEYS = 'ABCDEFGH';
+const $app = document.getElementById('app');
+let Q = [], qById = new Map(), syncInfo = '', exam = null, view = 'home';
+
+/* ===== 共通 ===== */
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('保存失敗', e); } };
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+function rnd(n) { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }
+function shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+const fmtTime = s => `${Math.floor(s / 60)}分${String(s % 60).padStart(2, '0')}秒`;
+const fmtExpl = s => (s || '').replace(/\s*(【[^】]{1,20}】)\s*/g, (m, p, off) => (off ? '\n\n' : '') + p + '\n').trim();
+const getUrl = () => (load(LS.url, '') || DEFAULT_CSV_URL || '').trim();
+function setQuestions(list) { Q = list; qById = new Map(list.map(q => [q.id, q])); }
+function currentDomain() { const d = load(LS.domain, ''); return Q.some(q => q.domain === d) ? d : ''; }
+
+/* ===== CSV解析（Papa Parse：セル内改行・カンマ・引用符に対応） ===== */
+function parseCsv(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const res = Papa.parse(text, { skipEmptyLines: 'greedy' });
+  const rows = res.data;
+  if (rows.length < 2) throw new Error('データ行がありません');
+  const head = rows[0].map(h => String(h).trim().toLowerCase().replace(/[\s_（）()]/g, ''));
+  const find = (...names) => head.findIndex(h => names.includes(h));
+  const iDomain = find('domain', 'ドメイン', '分野', '分野名');
+  const iType = find('type', '形式', '問題形式');
+  const iText = find('text', 'question', '問題文', '問題');
+  const iOptions = find('options', '選択肢');
+  const L = 'abcdef';
+  const iOptCols = [...L].map((c, n) => find('option' + c, 'option' + (n + 1), '選択肢' + c, '選択肢' + (n + 1))).filter(i => i >= 0);
+  const iCorrect = find('correct', 'answer', '正解', '正解インデックス');
+  let iExpl = find('explanation', '解説', '解説テキスト');
+  if (iExpl < 0 && head.length > 8) iExpl = 8; // 見出しがなければI列
+  if (iText < 0 || iCorrect < 0 || (iOptions < 0 && iOptCols.length < 2))
+    throw new Error('見出し行を認識できません：' + rows[0].join(', '));
+
+  const raw = [], nums = [];
+  rows.slice(1).forEach((r, k) => {
+    const text = String(r[iText] ?? '').trim();
+    const options = (iOptions >= 0 ? String(r[iOptions] ?? '').split('|') : iOptCols.map(i => r[i] ?? ''))
+      .map(s => String(s).trim()).filter(Boolean);
+    const toks = String(r[iCorrect] ?? '').trim().split(/[\s,、;|／/]+/).filter(Boolean);
+    const letters = [], numbers = [];
+    toks.forEach(t => { if (/^[a-h]$/i.test(t)) letters.push(t.toLowerCase().charCodeAt(0) - 97); else if (/^\d+$/.test(t)) { numbers.push(+t); nums.push(+t); } });
+    raw.push({ row: k + 2, r, text, options, letters, numbers });
+  });
+  // 正解の番号が0始まりか1始まりかを判定（0があれば0始まり、なければ最大値＝選択肢数なら1始まり）
+  const maxOpt = Math.max(...raw.map(x => x.options.length));
+  const zeroBased = iOptions >= 0 || nums.includes(0) || !nums.includes(maxOpt);
+
+  const map = new Map(); const skipped = []; let dups = 0;
+  for (const x of raw) {
+    const correct = [...new Set([...x.letters, ...x.numbers.map(n => zeroBased ? n : n - 1)])]
+      .filter(i => i >= 0 && i < x.options.length).sort((a, b) => a - b);
+    if (!x.text || x.options.length < 2 || !correct.length) { skipped.push(x.row); continue; }
+    const domain = String(x.r[iDomain] ?? '').trim() || '未分類';
+    const t = String(x.r[iType] ?? '').trim().toLowerCase();
+    const id = hash(domain + '|' + x.text);
+    if (map.has(id)) dups++;
+    map.set(id, { id, domain, text: x.text, options: x.options, correct,
+      type: (t === 'multi' || correct.length > 1) ? 'multi' : 'single',
+      explanation: iExpl >= 0 ? String(x.r[iExpl] ?? '').trim() : '' }); // 同じ問題は後の行（新しい版）を採用
+  }
+  return { questions: [...map.values()], skipped, dups };
+}
+
+/* ===== 取得（直接 → だめならVercelの中継） ===== */
+async function fetchText(url) {
+  const errs = [];
+  const isHtml = t => /^\s*<(!doctype|html)/i.test(t);
+  try {
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const t = await r.text(); if (isHtml(t)) throw new Error('CSVではなくHTMLが返されました');
+    return { text: t, via: '直接取得' };
+  } catch (e) { errs.push('直接：' + e.message); }
+  try {
+    const r = await fetch('/api/sheet?url=' + encodeURIComponent(url) + '&_ts=' + Date.now(), { cache: 'no-store' });
+    const t = await r.text();
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 80));
+    if (isHtml(t)) throw new Error('CSVではなくHTMLが返されました（公開設定を確認）');
+    return { text: t, via: '中継経由' };
+  } catch (e) { errs.push('中継：' + e.message); }
+  throw new Error(errs.join(' ／ '));
+}
+async function sync() {
+  const url = getUrl();
+  if (!url) { syncInfo = '「設定」で公開CSVのURLを入れてください。'; if (view === 'home') renderHome(); return; }
+  syncInfo = '同期中…'; if (view === 'home') renderHome();
+  try {
+    const { text, via } = await fetchText(url);
+    const p = parseCsv(text);
+    if (!p.questions.length) throw new Error('使える問題が0件でした');
+    setQuestions(p.questions);
+    save(LS.cache, { text, at: Date.now() });
+    syncInfo = `${Q.length}問を読み込みました（${via}・${new Date().toLocaleTimeString('ja-JP')}）`
+      + (p.dups ? `\n同じ問題 ${p.dups}件は後の行を採用しました` : '')
+      + (p.skipped.length ? `\n読めなかった行：${p.skipped.slice(0, 10).join(', ')}${p.skipped.length > 10 ? ' ほか' : ''}（計${p.skipped.length}行）` : '');
+  } catch (e) {
+    syncInfo = '同期に失敗しました：' + e.message + (Q.length ? '\n前回のデータを使います。' : '');
+  }
+  if (view === 'home') renderHome();
+}
+
+/* ===== ホーム ===== */
+function renderHome() {
+  view = 'home';
+  const wrong = load(LS.wrong, {});
+  const dsel = currentDomain();
+  const domains = [...new Set(Q.map(q => q.domain))];
+  const pool = Q.filter(q => !dsel || q.domain === dsel);
+  const weakN = pool.filter(q => wrong[q.id]).length;
+  const saved = load(LS.exam, null), hist = load(LS.hist, []), last = load(LS.last, null);
+  const testBtn = (n, name) => el('button', { class: 'btn', disabled: !pool.length, onclick: () => startExam('test', n) },
+    `${name}\n${Math.min(n, pool.length)}問`);
+
+  $app.replaceChildren(
+    el('div', { class: 'card' },
+      el('div', { class: 'top' }, el('b', {}, `問題数 ${Q.length}問`), el('span', { class: 'mut' }, `弱点 ${Object.keys(wrong).filter(id => qById.has(id)).length}問`)),
+      el('p', { class: 'mut pre' }, syncInfo),
+      el('button', { class: 'btn sub', onclick: sync }, '最新データを同期')),
+    saved ? el('div', { class: 'card' },
+      el('b', {}, '途中の試験があります'),
+      el('p', { class: 'mut' }, `${saved.label}：${Object.keys(saved.answers).length} / ${saved.items.length}問 回答済み`),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn', onclick: resume }, '続きから'),
+        el('button', { class: 'btn warn', onclick: () => { if (confirm('途中の試験を破棄しますか？')) { localStorage.removeItem(LS.exam); renderHome(); } } }, '破棄'))) : null,
+    el('div', { class: 'card' },
+      el('b', {}, 'テストモード'),
+      el('select', { onchange: e => { save(LS.domain, e.target.value); renderHome(); } },
+        el('option', { value: '' }, `全分野（${Q.length}問）`),
+        domains.map(d => el('option', { value: d, selected: d === dsel }, `${d}（${Q.filter(q => q.domain === d).length}問）`))),
+      el('div', { class: 'grid3' }, testBtn(10, 'クイック'), testBtn(30, 'ミドル'), testBtn(60, 'フル')),
+      el('button', { class: 'btn sub', disabled: !weakN, onclick: () => startExam('weak') }, `弱点克服モード（${weakN}問）`),
+      el('label', { class: 'chk' },
+        el('input', { type: 'checkbox', checked: load(LS.shuf, true), onchange: e => save(LS.shuf, e.target.checked) }),
+        '選択肢の順番もシャッフルする')),
+    (last || hist.length) ? el('div', { class: 'card' },
+      el('b', {}, '学習履歴'),
+      last ? el('button', { class: 'btn sub', onclick: () => renderResult(last) }, '前回の結果を見直す') : null,
+      el('table', {}, hist.slice(0, 8).map(h => el('tr', {},
+        el('td', {}, new Date(h.at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })),
+        el('td', {}, h.label),
+        el('td', { class: 'n' }, `${h.score}/${h.total}（${Math.round(h.score / h.total * 100)}%）`))))) : null,
+    el('details', { class: 'card' },
+      el('summary', {}, '設定'),
+      el('p', { class: 'mut' }, 'スプレッドシートの「ウェブに公開」で出したCSVのURL'),
+      el('input', { type: 'text', id: 'url', value: getUrl(), placeholder: 'https://docs.google.com/spreadsheets/d/e/.../pub?output=csv' }),
+      el('button', { class: 'btn', onclick: () => { save(LS.url, document.getElementById('url').value.trim()); sync(); } }, '保存して同期'),
+      el('button', { class: 'btn warn', onclick: () => { if (confirm('間違えた問題の記録と履歴をすべて消しますか？')) { [LS.wrong, LS.hist, LS.last].forEach(k => localStorage.removeItem(k)); renderHome(); } } }, '弱点・履歴をリセット'),
+      el('p', { class: 'mut' }, '記録はこの端末のブラウザに保存されます（PCとスマホでは別々です）。'))
+  );
+}
+
+/* ===== 試験 ===== */
+function startExam(kind, n) {
+  const dsel = currentDomain();
+  let pool = Q.filter(q => !dsel || q.domain === dsel), label;
+  if (kind === 'weak') { const w = load(LS.wrong, {}); pool = pool.filter(q => w[q.id]); label = '弱点克服'; }
+  else label = { 10: 'クイック', 30: 'ミドル', 60: 'フル' }[n] + 'テスト';
+  if (dsel) label += `（${dsel}）`;
+  if (!pool.length) return alert('出題できる問題がありません');
+  beginExam(label, shuffle(pool).slice(0, n || pool.length).map(q => q.id));
+}
+function beginExam(label, ids) {
+  const shuf = load(LS.shuf, true);
+  exam = { label, idx: 0, answers: {}, start: Date.now(), elapsed: 0,
+    items: ids.filter(id => qById.has(id)).map(id => { const k = qById.get(id).options.map((_, i) => i); return { id, order: shuf ? shuffle(k) : k }; }) };
+  saveExam(); renderQuestion(); scrollTo(0, 0);
+}
+const elapsedSec = () => Math.floor((Date.now() - exam.start) / 1000);
+function saveExam() { exam.elapsed = elapsedSec(); save(LS.exam, exam); }
+function resume() {
+  exam = load(LS.exam, null); if (!exam) return renderHome();
+  exam.items = exam.items.filter(it => qById.has(it.id) && qById.get(it.id).options.length === it.order.length);
+  if (!exam.items.length) { localStorage.removeItem(LS.exam); exam = null; alert('問題データが変わったため続きから再開できません'); return renderHome(); }
+  exam.idx = Math.min(exam.idx, exam.items.length - 1);
+  exam.start = Date.now() - (exam.elapsed || 0) * 1000;
+  renderQuestion();
+}
+function go(d) { exam.idx = Math.max(0, Math.min(exam.items.length - 1, exam.idx + d)); saveExam(); renderQuestion(); scrollTo(0, 0); }
+function quit() { saveExam(); exam = null; renderHome(); }
+function renderQuestion() {
+  view = 'exam';
+  const it = exam.items[exam.idx], q = qById.get(it.id), ans = exam.answers[it.id] || [];
+  const total = exam.items.length, done = Object.keys(exam.answers).length, isLast = exam.idx === total - 1;
+  const pick = orig => {
+    let a = exam.answers[it.id] || [];
+    a = q.type === 'multi' ? (a.includes(orig) ? a.filter(x => x !== orig) : [...a, orig]) : [orig];
+    if (a.length) exam.answers[it.id] = a; else delete exam.answers[it.id];
+    saveExam(); renderQuestion();
+  };
+  $app.replaceChildren(
+    el('div', { class: 'card' },
+      el('div', { class: 'top' }, el('b', {}, exam.label), el('span', { id: 'timer', class: 'mut' }, fmtTime(elapsedSec()))),
+      el('div', { class: 'top mut' }, el('span', {}, `問 ${exam.idx + 1} / ${total}`), el('span', {}, `回答済み ${done}`)),
+      el('div', { class: 'bar' }, el('i', { style: `width:${(exam.idx + 1) / total * 100}%` }))),
+    el('div', { class: 'card' },
+      el('span', { class: 'tag' }, q.domain),
+      el('span', { class: 'tag' }, q.type === 'multi' ? `複数選択（${q.correct.length}つ選ぶ）` : '単一選択'),
+      el('div', { class: 'qtext pre' }, q.text),
+      it.order.map((orig, p) => el('button', { class: 'opt' + (ans.includes(orig) ? ' sel' : ''), onclick: () => pick(orig) },
+        el('span', { class: 'k' }, KEYS[p]), el('span', { class: 'pre' }, q.options[orig])))),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn sub', disabled: exam.idx === 0, onclick: () => go(-1) }, '← 前へ'),
+      isLast ? el('button', { class: 'btn', onclick: finish }, '採点する') : el('button', { class: 'btn', onclick: () => go(1) }, '次へ →')),
+    el('details', { class: 'card' },
+      el('summary', {}, '問題一覧・途中で採点'),
+      el('div', { class: 'pal' }, exam.items.map((x, i) => el('button', {
+        class: (exam.answers[x.id] ? 'a' : '') + (i === exam.idx ? ' c' : ''),
+        onclick: () => { exam.idx = i; saveExam(); renderQuestion(); scrollTo(0, 0); } }, i + 1))),
+      el('button', { class: 'btn sub', onclick: finish }, 'ここで採点する'),
+      el('button', { class: 'btn warn', onclick: quit }, '中断してホームへ（途中保存されます）'))
+  );
+}
+function finish() {
+  const un = exam.items.filter(it => !exam.answers[it.id]).length;
+  if (un && !confirm(`未回答が${un}問あります。採点しますか？（未回答は不正解になります）`)) return;
+  const wrong = load(LS.wrong, {});
+  const results = exam.items.map(it => {
+    const q = qById.get(it.id), a = exam.answers[it.id] || [];
+    const ok = a.length === q.correct.length && a.every(x => q.correct.includes(x));
+    if (ok) delete wrong[it.id]; else wrong[it.id] = { n: ((wrong[it.id] && wrong[it.id].n) || 0) + 1, t: Date.now() };
+    return { id: it.id, order: it.order, ans: a, ok };
+  });
+  save(LS.wrong, wrong);
+  const score = results.filter(r => r.ok).length, total = results.length, sec = elapsedSec();
+  const hist = load(LS.hist, []); hist.unshift({ at: Date.now(), label: exam.label, score, total, sec }); save(LS.hist, hist.slice(0, 50));
+  const result = { label: exam.label, results, score, total, sec };
+  save(LS.last, result); localStorage.removeItem(LS.exam); exam = null;
+  renderResult(result); scrollTo(0, 0);
+}
+
+/* ===== 結果・振り返り ===== */
+function renderResult(r, only = false) {
+  view = 'result';
+  const rs = r.results.map((x, i) => ({ ...x, no: i + 1 })).filter(x => qById.has(x.id));
+  const pct = r.total ? Math.round(r.score / r.total * 100) : 0;
+  const byD = {};
+  rs.forEach(x => { const d = qById.get(x.id).domain; byD[d] = byD[d] || { o: 0, n: 0 }; byD[d].n++; if (x.ok) byD[d].o++; });
+  const wrongIds = rs.filter(x => !x.ok).map(x => x.id);
+  $app.replaceChildren(
+    el('div', { class: 'card' },
+      el('div', { class: 'mut', style: 'text-align:center' }, r.label),
+      el('div', { class: 'score' }, `${pct}%`),
+      el('div', { style: 'text-align:center' }, `${r.score} / ${r.total}問 正解・${fmtTime(r.sec)}`),
+      el('table', {}, el('tr', {}, el('th', {}, '分野'), el('th', { class: 'n' }, '正答')),
+        Object.entries(byD).map(([d, v]) => el('tr', {}, el('td', {}, d), el('td', { class: 'n' }, `${v.o}/${v.n}（${Math.round(v.o / v.n * 100)}%）`))))),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn' + (only ? ' sub' : ''), onclick: () => renderResult(r, false) }, `すべて（${rs.length}）`),
+      el('button', { class: 'btn' + (only ? '' : ' sub'), onclick: () => renderResult(r, true) }, `不正解のみ（${wrongIds.length}）`)),
+    rs.filter(x => !only || !x.ok).map(resultCard),
+    wrongIds.length ? el('button', { class: 'btn', onclick: () => beginExam('間違えた問題の再挑戦', shuffle(wrongIds)) }, '間違えた問題だけもう一度') : null,
+    el('button', { class: 'btn sub', onclick: renderHome }, 'ホームへ')
+  );
+}
+function resultCard(x) {
+  const q = qById.get(x.id);
+  const order = x.order.length === q.options.length ? x.order : q.options.map((_, i) => i);
+  return el('div', { class: 'card' },
+    el('div', { class: 'res-h' }, el('span', { class: 'mark ' + (x.ok ? 'o' : 'x') }, x.ok ? '○' : '×'), `問${x.no}`, el('span', { class: 'tag' }, q.domain)),
+    el('div', { class: 'qtext pre' }, q.text),
+    x.ans.length ? null : el('p', { style: 'color:var(--ng);font-weight:700;margin:0' }, '未回答'),
+    order.map((orig, p) => {
+      const isC = q.correct.includes(orig), isU = x.ans.includes(orig);
+      const badge = isC && isU ? '正解・あなたの回答' : isC ? '正解' : isU ? 'あなたの回答' : '';
+      return el('div', { class: 'opt' + (isC ? ' ok' : isU ? ' ng' : ''), style: 'cursor:default' },
+        el('span', { class: 'k' }, KEYS[p]), el('span', { class: 'pre' }, q.options[orig]), badge ? el('span', { class: 'badge' }, badge) : null);
+    }),
+    el('div', { class: 'expl pre' }, el('b', {}, '解説'), '\n', fmtExpl(q.explanation) || '（解説はありません）'));
+}
+
+/* ===== 操作・起動 ===== */
+document.getElementById('home').onclick = () => { if (view === 'exam') { if (confirm('ホームへ戻りますか？（途中保存されます）')) quit(); } else renderHome(); };
+document.addEventListener('keydown', e => {   // PC用：A〜D / 1〜4で選択、←→で移動
+  if (view !== 'exam' || !exam || e.target.tagName === 'INPUT') return;
+  const k = e.key.toUpperCase(); let p = KEYS.indexOf(k); if (/^[1-8]$/.test(k)) p = +k - 1;
+  if (p >= 0 && k.length === 1) document.querySelectorAll('.opt')[p]?.click();
+  else if (e.key === 'ArrowRight') { if (exam.idx < exam.items.length - 1) go(1); }
+  else if (e.key === 'ArrowLeft') go(-1);
+});
+setInterval(() => { const t = document.getElementById('timer'); if (t && exam) t.textContent = fmtTime(elapsedSec()); }, 1000);
+(function init() {
+  const c = load(LS.cache, null);
+  if (c && c.text) { try { setQuestions(parseCsv(c.text).questions); syncInfo = `保存済みデータ ${Q.length}問（${new Date(c.at).toLocaleString('ja-JP')}）`; } catch (e) {} }
+  renderHome();
+  if (getUrl()) sync();   // 起動するたびに最新データを取得
+})();
+</script>
+</body>
+</html>
