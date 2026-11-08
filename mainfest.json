@@ -1,0 +1,8 @@
+{
+  "name": "CSA模擬試験",
+  "short_name": "CSA模試",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f6",
+  "theme_color": "#1f6f5c"
+}
