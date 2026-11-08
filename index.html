@@ -63,7 +63,9 @@ const DEFAULT_CSV_URL = "";
 
 const LS = { url:'csa_url', cache:'csa_cache', wrong:'csa_wrong', hist:'csa_hist', exam:'csa_exam', last:'csa_last', shuf:'csa_shuffle', domain:'csa_domain' };
 const KEYS = 'ABCDEFGH';
+const $app = document.getElementById('app');
 const _rc = $app.replaceChildren.bind($app); $app.replaceChildren = (...k) => _rc(...k.flat(Infinity).filter(c => c != null && c !== false));
+
 let Q = [], qById = new Map(), syncInfo = '', exam = null, view = 'home';
 
 /* ===== 共通 ===== */
