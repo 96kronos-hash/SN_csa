@@ -57,20 +57,23 @@ label.chk{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:14px}
 <header><h1 id="home">CSA模擬試験</h1></header>
 <main id="app"></main>
 <script>
-/* ===== 設定 ===== */
-// ここに公開CSVのURLを入れると、どの端末でも設定なしで使えます（空のままなら画面の「設定」で入力）
-const DEFAULT_CSV_URL = "";
+/* ===== 設定（ここだけ書き換え） ===== */
+const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_G7cliv6WAC_aGCLw5SSTiWu9nabcFOsb4N59JHBtRjxojtijn4Ir2E70fcpZKc8z_33LyfkTe_4R/pub?output=csv";   // 公開CSVのURL（空なら画面の「設定」で入力）
+const SYNC_URL = "https://script.google.com/macros/s/AKfycbx2c66rr7-g11Evb3l0NdMcIOImu9k9TdT0oU6ngZ9noHM36g9z5-WVDc_XNBlFlidiUA/exec";          // Apps ScriptのURL（https://script.google.com/macros/s/…/exec）
+const SYNC_TOKEN = "krofug";  // Apps Scriptの TOKEN と同じ合言葉
 
-const LS = { url:'csa_url', cache:'csa_cache', wrong:'csa_wrong', hist:'csa_hist', exam:'csa_exam', last:'csa_last', shuf:'csa_shuffle', domain:'csa_domain' };
+const LS = { url:'csa_url', cache:'csa_cache', wrong:'csa_wrong', hist:'csa_hist', exam:'csa_exam', last:'csa_last', shuf:'csa_shuffle', domain:'csa_domain',
+  cleared:'csa_cleared', lastAt:'csa_lastAt', resetAt:'csa_resetAt' };
+const SYNC_SET = new Set([LS.wrong, LS.cleared, LS.hist, LS.last, LS.lastAt, LS.resetAt]);
 const KEYS = 'ABCDEFGH';
 const $app = document.getElementById('app');
 const _rc = $app.replaceChildren.bind($app); $app.replaceChildren = (...k) => _rc(...k.flat(Infinity).filter(c => c != null && c !== false));
 
-let Q = [], qById = new Map(), syncInfo = '', exam = null, view = 'home';
+let Q = [], qById = new Map(), syncInfo = '', logInfo = '', exam = null, view = 'home';
 
 /* ===== 共通 ===== */
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
-const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('保存失敗', e); } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('保存失敗', e); } if (SYNC_SET.has(k)) schedulePush(); };
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -109,7 +112,7 @@ function parseCsv(text) {
   const iOptCols = [...L].map((c, n) => find('option' + c, 'option' + (n + 1), '選択肢' + c, '選択肢' + (n + 1))).filter(i => i >= 0);
   const iCorrect = find('correct', 'answer', '正解', '正解インデックス');
   let iExpl = find('explanation', '解説', '解説テキスト');
-  if (iExpl < 0 && head.length > 8) iExpl = 8; // 見出しがなければI列
+  if (iExpl < 0 && head.length > 8) iExpl = 8;
   if (iText < 0 || iCorrect < 0 || (iOptions < 0 && iOptCols.length < 2))
     throw new Error('見出し行を認識できません：' + rows[0].join(', '));
 
@@ -123,7 +126,6 @@ function parseCsv(text) {
     toks.forEach(t => { if (/^[a-h]$/i.test(t)) letters.push(t.toLowerCase().charCodeAt(0) - 97); else if (/^\d+$/.test(t)) { numbers.push(+t); nums.push(+t); } });
     raw.push({ row: k + 2, r, text, options, letters, numbers });
   });
-  // 正解の番号が0始まりか1始まりかを判定（0があれば0始まり、なければ最大値＝選択肢数なら1始まり）
   const maxOpt = Math.max(...raw.map(x => x.options.length));
   const zeroBased = iOptions >= 0 || nums.includes(0) || !nums.includes(maxOpt);
 
@@ -138,12 +140,12 @@ function parseCsv(text) {
     if (map.has(id)) dups++;
     map.set(id, { id, domain, text: x.text, options: x.options, correct,
       type: (t === 'multi' || correct.length > 1) ? 'multi' : 'single',
-      explanation: iExpl >= 0 ? String(x.r[iExpl] ?? '').trim() : '' }); // 同じ問題は後の行（新しい版）を採用
+      explanation: iExpl >= 0 ? String(x.r[iExpl] ?? '').trim() : '' });
   }
   return { questions: [...map.values()], skipped, dups };
 }
 
-/* ===== 取得（直接 → だめならVercelの中継） ===== */
+/* ===== 問題データ取得（直接 → だめならVercelの中継） ===== */
 async function fetchText(url) {
   const errs = [];
   const isHtml = t => /^\s*<(!doctype|html)/i.test(t);
@@ -181,6 +183,73 @@ async function sync() {
   if (view === 'home') renderHome();
 }
 
+/* ===== 記録の同期（PC・スマホ共通、Apps Script経由） ===== */
+let pushTimer = null, syncing = false, again = false;
+function schedulePush() {
+  if (!SYNC_URL) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(syncLog, 1500);
+}
+const localState = () => ({ wrong: load(LS.wrong, {}), cleared: load(LS.cleared, {}), hist: load(LS.hist, []),
+  last: load(LS.last, null), lastAt: load(LS.lastAt, 0), resetAt: load(LS.resetAt, 0) });
+function mergeState(a, b) {
+  b = (b && typeof b === 'object') ? b : {};
+  const resetAt = Math.max(a.resetAt || 0, b.resetAt || 0);
+  const cleared = {};
+  for (const s of [a.cleared || {}, b.cleared || {}])
+    for (const [id, t] of Object.entries(s)) if (t >= resetAt && t > (cleared[id] || 0)) cleared[id] = t;
+  const wrong = {};
+  for (const s of [a.wrong || {}, b.wrong || {}])
+    for (const [id, w] of Object.entries(s)) {
+      if (!w) continue;
+      const t = w.t || 0;
+      if (t < resetAt || (cleared[id] || 0) >= t) continue;
+      if (!wrong[id] || t > (wrong[id].t || 0)) wrong[id] = w;
+    }
+  const seen = new Set();
+  const hist = [...(a.hist || []), ...(b.hist || [])]
+    .filter(h => h && h.at >= resetAt && !seen.has(h.at) && seen.add(h.at))
+    .sort((x, y) => y.at - x.at).slice(0, 50);
+  const la = a.lastAt || 0, lb = b.lastAt || 0;
+  let last = la >= lb ? a.last : b.last, lastAt = Math.max(la, lb);
+  if (!last || lastAt < resetAt) { last = null; lastAt = 0; }
+  return { wrong, cleared, hist, last, lastAt, resetAt };
+}
+function writeLocal(s) {
+  const put = (k, v) => { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); };
+  put(LS.wrong, s.wrong); put(LS.cleared, s.cleared); put(LS.hist, s.hist);
+  put(LS.last, s.last); put(LS.lastAt, s.lastAt); put(LS.resetAt, s.resetAt);
+}
+async function readJson(r) {
+  const t = await r.text();
+  try { return JSON.parse(t); }
+  catch (e) { throw new Error('Apps Scriptの応答がJSONではありません（デプロイのアクセスを「全員」にしているか確認）'); }
+}
+async function syncLog() {
+  if (!SYNC_URL) return;
+  clearTimeout(pushTimer); pushTimer = null;
+  if (syncing) { again = true; return; }
+  syncing = true;
+  try {
+    const r = await fetch(SYNC_URL + '?token=' + encodeURIComponent(SYNC_TOKEN) + '&_ts=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('取得 HTTP ' + r.status);
+    const remote = await readJson(r);
+    if (remote && remote.error) throw new Error(remote.error === 'token' ? '合言葉が一致しません' : remote.error);
+    const merged = mergeState(localState(), remote);
+    writeLocal(merged);
+    const p = await fetch(SYNC_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: SYNC_TOKEN, data: merged }) });
+    const pr = await readJson(p);
+    if (pr && pr.error) throw new Error(pr.error === 'token' ? '合言葉が一致しません' : pr.error);
+    logInfo = `記録を同期しました（${new Date().toLocaleTimeString('ja-JP')}）`;
+  } catch (e) {
+    logInfo = '記録の同期に失敗：' + e.message;
+  }
+  syncing = false;
+  if (view === 'home') renderHome();
+  if (again) { again = false; syncLog(); }
+}
+
 /* ===== ホーム ===== */
 function renderHome() {
   view = 'home';
@@ -196,8 +265,8 @@ function renderHome() {
   $app.replaceChildren(
     el('div', { class: 'card' },
       el('div', { class: 'top' }, el('b', {}, `問題数 ${Q.length}問`), el('span', { class: 'mut' }, `弱点 ${Object.keys(wrong).filter(id => qById.has(id)).length}問`)),
-      el('p', { class: 'mut pre' }, syncInfo),
-      el('button', { class: 'btn sub', onclick: sync }, '最新データを同期')),
+      el('p', { class: 'mut pre' }, syncInfo + (logInfo ? '\n' + logInfo : '')),
+      el('button', { class: 'btn sub', onclick: () => { sync(); syncLog(); } }, '最新データを同期')),
     saved ? el('div', { class: 'card' },
       el('b', {}, '途中の試験があります'),
       el('p', { class: 'mut' }, `${saved.label}：${Object.keys(saved.answers).length} / ${saved.items.length}問 回答済み`),
@@ -226,9 +295,17 @@ function renderHome() {
       el('p', { class: 'mut' }, 'スプレッドシートの「ウェブに公開」で出したCSVのURL'),
       el('input', { type: 'text', id: 'url', value: getUrl(), placeholder: 'https://docs.google.com/spreadsheets/d/e/.../pub?output=csv' }),
       el('button', { class: 'btn', onclick: () => { save(LS.url, document.getElementById('url').value.trim()); sync(); } }, '保存して同期'),
-      el('button', { class: 'btn warn', onclick: () => { if (confirm('間違えた問題の記録と履歴をすべて消しますか？')) { [LS.wrong, LS.hist, LS.last].forEach(k => localStorage.removeItem(k)); renderHome(); } } }, '弱点・履歴をリセット'),
-      el('p', { class: 'mut' }, '記録はこの端末のブラウザに保存されます（PCとスマホでは別々です）。'))
+      el('button', { class: 'btn warn', onclick: resetLog }, '弱点・履歴をリセット'),
+      el('p', { class: 'mut' }, SYNC_URL
+        ? '記録（弱点・履歴・前回の結果）はPCとスマホで同期されます。途中の試験は端末ごとに保存されます。'
+        : '記録はこの端末のブラウザに保存されます（PCとスマホでは別々です）。'))
   );
+}
+function resetLog() {
+  if (!confirm('間違えた問題の記録と履歴をすべて消しますか？' + (SYNC_URL ? '（PC・スマホ両方から消えます）' : ''))) return;
+  [LS.wrong, LS.hist, LS.last, LS.cleared, LS.lastAt].forEach(k => localStorage.removeItem(k));
+  save(LS.resetAt, Date.now());
+  renderHome();
 }
 
 /* ===== 試験 ===== */
@@ -295,18 +372,21 @@ function renderQuestion() {
 function finish() {
   const un = exam.items.filter(it => !exam.answers[it.id]).length;
   if (un && !confirm(`未回答が${un}問あります。採点しますか？（未回答は不正解になります）`)) return;
-  const wrong = load(LS.wrong, {});
+  const wrong = load(LS.wrong, {}), cleared = load(LS.cleared, {}), now = Date.now();
   const results = exam.items.map(it => {
     const q = qById.get(it.id), a = exam.answers[it.id] || [];
     const ok = a.length === q.correct.length && a.every(x => q.correct.includes(x));
-    if (ok) delete wrong[it.id]; else wrong[it.id] = { n: ((wrong[it.id] && wrong[it.id].n) || 0) + 1, t: Date.now() };
+    if (ok) { delete wrong[it.id]; cleared[it.id] = now; }
+    else { wrong[it.id] = { n: ((wrong[it.id] && wrong[it.id].n) || 0) + 1, t: now }; delete cleared[it.id]; }
     return { id: it.id, order: it.order, ans: a, ok };
   });
+  save(LS.cleared, cleared);
   save(LS.wrong, wrong);
   const score = results.filter(r => r.ok).length, total = results.length, sec = elapsedSec();
-  const hist = load(LS.hist, []); hist.unshift({ at: Date.now(), label: exam.label, score, total, sec }); save(LS.hist, hist.slice(0, 50));
+  const hist = load(LS.hist, []); hist.unshift({ at: now, label: exam.label, score, total, sec }); save(LS.hist, hist.slice(0, 50));
   const result = { label: exam.label, results, score, total, sec };
-  save(LS.last, result); localStorage.removeItem(LS.exam); exam = null;
+  save(LS.last, result); save(LS.lastAt, now);
+  localStorage.removeItem(LS.exam); exam = null;
   renderResult(result); scrollTo(0, 0);
 }
 
@@ -351,19 +431,24 @@ function resultCard(x) {
 
 /* ===== 操作・起動 ===== */
 document.getElementById('home').onclick = () => { if (view === 'exam') { if (confirm('ホームへ戻りますか？（途中保存されます）')) quit(); } else renderHome(); };
-document.addEventListener('keydown', e => {   // PC用：A〜D / 1〜4で選択、←→で移動
+document.addEventListener('keydown', e => {
   if (view !== 'exam' || !exam || e.target.tagName === 'INPUT') return;
   const k = e.key.toUpperCase(); let p = KEYS.indexOf(k); if (/^[1-8]$/.test(k)) p = +k - 1;
   if (p >= 0 && k.length === 1) document.querySelectorAll('.opt')[p]?.click();
   else if (e.key === 'ArrowRight') { if (exam.idx < exam.items.length - 1) go(1); }
   else if (e.key === 'ArrowLeft') go(-1);
 });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncLog();   // アプリに戻ったら最新の記録を取得
+  else if (pushTimer) syncLog();                            // 閉じる前に未送信分を送る
+});
 setInterval(() => { const t = document.getElementById('timer'); if (t && exam) t.textContent = fmtTime(elapsedSec()); }, 1000);
 (function init() {
   const c = load(LS.cache, null);
   if (c && c.text) { try { setQuestions(parseCsv(c.text).questions); syncInfo = `保存済みデータ ${Q.length}問（${new Date(c.at).toLocaleString('ja-JP')}）`; } catch (e) {} }
   renderHome();
-  if (getUrl()) sync();   // 起動するたびに最新データを取得
+  if (getUrl()) sync();
+  syncLog();
 })();
 </script>
 </body>
